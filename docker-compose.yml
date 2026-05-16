@@ -1,0 +1,91 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: test
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: test
+      PORT: "8080"
+      LOG_FILE: /var/log/backend/app.log
+    volumes:
+      - backend-logs:/var/log/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.50.0
+    ports:
+      - "9428:9428"
+    volumes:
+      - vl-data:/victoria-logs-data
+    command:
+      - -storageDataPath=/victoria-logs-data
+      - -httpListenAddr=:9428
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.6.10
+    volumes:
+      - ./promtail/config.yaml:/etc/promtail/config.yaml
+      - backend-logs:/var/log/backend
+    command:
+      - -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - backend
+      - victorialogs
+    networks:
+      - appnet
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  backend-logs:
+  vl-data:
+
+networks:
+  appnet:
+    driver: bridge
